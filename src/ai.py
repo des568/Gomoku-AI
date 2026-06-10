@@ -1,13 +1,16 @@
 import math
 import time
 
+from board import Board
+from evaluation import Evaluator
+
 class AI:
     def __init__(self, depth=4):
         self.depth = depth
         self.evaluator = Evaluator()
         self.best_move = None
         self.nodes_searched = 0
-        self.ai_player = None  # AI执哪一方（白棋）
+        self.ai_player = Board.WHITE  # AI执白棋（后手）
     
     def set_depth(self, depth):
         self.depth = depth
@@ -15,9 +18,6 @@ class AI:
     def get_best_move(self, board):
         self.best_move = None
         self.nodes_searched = 0
-        
-        # AI总是执白棋（后手）
-        self.ai_player = Board.WHITE
         
         candidates = board.get_candidates(radius=1)
         
@@ -28,7 +28,6 @@ class AI:
         
         for move in candidates:
             board.make_move(move[0], move[1])
-            # AI是最大化玩家（白棋），所以这里传入False表示当前是最小化玩家（黑棋）的回合
             score = self.minimax(board, self.depth - 1, -math.inf, math.inf, False)
             board.undo_move()
             
@@ -59,7 +58,6 @@ class AI:
         candidates = board.get_candidates(radius=1)
         
         if maximizing_player:
-            # AI回合（白棋），最大化分数
             max_eval = -math.inf
             for move in candidates:
                 board.make_move(move[0], move[1])
@@ -74,7 +72,6 @@ class AI:
             
             return max_eval
         else:
-            # 玩家回合（黑棋），最小化分数
             min_eval = math.inf
             for move in candidates:
                 board.make_move(move[0], move[1])
@@ -88,5 +85,3 @@ class AI:
                     break
             
             return min_eval
-
-from evaluation import Evaluator
