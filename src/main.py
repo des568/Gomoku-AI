@@ -8,7 +8,7 @@ from ui import UI
 
 def main():
     board = Board()
-    ai = AI(depth=4)
+    ai = AI(depth=2)
     ui = UI(board, ai)
     ui.run()
 
