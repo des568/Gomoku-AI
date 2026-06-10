@@ -185,19 +185,9 @@ class UI:
         }
 
     def handle_click(self, pos):
-        if not self.is_player_turn or self.game_over:
-            return
-
         buttons = self._compute_buttons()
 
-        # 难度按钮
-        for i, btn in enumerate(buttons['depth_buttons']):
-            if btn.collidepoint(pos):
-                self.selected_depth = self.depths[i]
-                self.ai.set_depth(self.selected_depth)
-                return
-
-        # 重新开始
+        # 重新开始按钮 —— 始终可用
         if buttons['restart_btn'].collidepoint(pos):
             self.board.reset()
             self.game_over = False
@@ -206,7 +196,14 @@ class UI:
             self.is_player_turn = True
             return
 
-        # 悔棋（撤销两步）
+        # 难度按钮 —— 始终可用
+        for i, btn in enumerate(buttons['depth_buttons']):
+            if btn.collidepoint(pos):
+                self.selected_depth = self.depths[i]
+                self.ai.set_depth(self.selected_depth)
+                return
+
+        # 悔棋按钮 —— 仅在游戏中可用
         if buttons['undo_btn'].collidepoint(pos):
             if self.board.last_move is not None:
                 self.board.undo_move()
@@ -216,6 +213,10 @@ class UI:
             self.winner = None
             self.ai_move = None
             self.is_player_turn = True
+            return
+
+        # 棋盘落子 —— 仅在玩家回合且游戏未结束时可用
+        if not self.is_player_turn or self.game_over:
             return
 
         if pos[0] > self.board_pixel:
