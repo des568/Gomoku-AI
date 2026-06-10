@@ -11,7 +11,7 @@ class UI:
         self.cell_size = 40
         self.board_size = 15
         self.board_pixel = self.board_size * self.cell_size + 60
-        self.screen_width = self.board_pixel + 200
+        self.screen_width = self.board_pixel + 180
         self.screen_height = self.board_pixel + 40
         self.padding = 30
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
@@ -25,256 +25,190 @@ class UI:
         self.font = self._get_font(22)
         self.small_font = self._get_font(16)
 
-        self.selected_depth = 2
-        self.depths = [2, 4, 6]
         self.game_over = False
         self.winner = None
         self.ai_move = None
         self.is_player_turn = True
         self.ai_result_ready = False
+        self._last_player_turn = True
+        self._last_game_over = False
+        self._last_winner = None
 
-        # 缓存按钮区域
-        self._cached_buttons = {}
+        # ===== 预渲染所有静态文本，避免每帧重绘 =====
+        p = self.board_pixel + 10
+        self._panel_rect = pygame.Rect(p - 5, 10, 170, self.screen_height - 20)
+        self._btn_restart = pygame.Rect(p, self.screen_height - 70, 75, 32)
+        self._btn_undo = pygame.Rect(p + 85, self.screen_height - 70, 75, 32)
+
+        self._txt_restart = self.font.render("重新开始", True, self.WHITE)
+        self._txt_undo = self.font.render("悔棋", True, self.WHITE)
+        self._txt_turn_label = self.small_font.render("状态:", True, self.TEXT_COLOR)
+
+        # 动态文本缓存
+        self._cache = {}
 
     def _get_font(self, size):
         fonts_to_try = [
             "C:/Windows/Fonts/simhei.ttf",
             "C:/Windows/Fonts/msyh.ttc",
             "C:/Windows/Fonts/simsun.ttc",
-            "Arial",
-            None
+            "Arial", None
         ]
-        for font_path in fonts_to_try:
+        for fp in fonts_to_try:
             try:
-                if font_path is None:
-                    return pygame.font.Font(None, size)
-                return pygame.font.Font(font_path, size)
+                return pygame.font.Font(fp, size) if fp else pygame.font.Font(None, size)
             except:
                 continue
         return pygame.font.Font(None, size)
 
-    def _compute_buttons(self):
-        """仅计算按钮位置，不渲染"""
-        panel_x = self.board_pixel + 10
-        panel_y = 30
-
-        # 跳过文本，直接计算
-        panel_y += 35  # 当前回合文本
-        panel_y += 22  # 难度标签
-
-        depth_buttons = []
-        for _ in self.depths:
-            btn_rect = pygame.Rect(panel_x, panel_y, 55, 25)
-            depth_buttons.append(btn_rect)
-            panel_y += 30
-
-        panel_y += 15
-        btn_width, btn_height = 80, 32
-        restart_btn = pygame.Rect(panel_x, panel_y, btn_width, btn_height)
-        undo_btn = pygame.Rect(panel_x + btn_width + 10, panel_y, btn_width, btn_height)
-
-        return {
-            'depth_buttons': depth_buttons,
-            'restart_btn': restart_btn,
-            'undo_btn': undo_btn
-        }
+    def _cached_text(self, key, render_fn):
+        if key not in self._cache:
+            self._cache[key] = render_fn()
+        return self._cache[key]
 
     def draw_board(self):
         self.screen.fill(self.BOARD_COLOR)
 
-        # 棋盘线
-        line_end = self.padding + (self.board_size - 1) * self.cell_size
+        end = self.padding + (self.board_size - 1) * self.cell_size
         for i in range(self.board_size):
             x = self.padding + i * self.cell_size
-            pygame.draw.line(self.screen, self.BLACK, (x, self.padding), (x, line_end), 1)
-            pygame.draw.line(self.screen, self.BLACK, (self.padding, x), (line_end, x), 1)
+            pygame.draw.line(self.screen, self.BLACK, (x, self.padding), (x, end), 1)
+            pygame.draw.line(self.screen, self.BLACK, (self.padding, x), (end, x), 1)
 
-        # 星位
         for i in [3, 7, 11]:
             x = self.padding + i * self.cell_size
             for j in [3, 7, 11]:
-                y = self.padding + j * self.cell_size
-                pygame.draw.circle(self.screen, self.BLACK, (x, y), 4, 0)
+                pygame.draw.circle(self.screen, self.BLACK, (x, self.padding + j * self.cell_size), 4, 0)
 
-        # 棋子
-        for row in range(self.board_size):
-            for col in range(self.board_size):
-                if self.board.board[row][col] != 0:
-                    x = self.padding + col * self.cell_size
-                    y = self.padding + row * self.cell_size
-                    color = self.BLACK if self.board.board[row][col] == 1 else self.WHITE
-                    pygame.draw.circle(self.screen, color, (x, y), self.cell_size // 2 - 2, 0)
-                    if color == self.WHITE:
+        for r in range(self.board_size):
+            for c in range(self.board_size):
+                if self.board.board[r][c] != 0:
+                    x = self.padding + c * self.cell_size
+                    y = self.padding + r * self.cell_size
+                    clr = self.BLACK if self.board.board[r][c] == 1 else self.WHITE
+                    pygame.draw.circle(self.screen, clr, (x, y), self.cell_size // 2 - 2, 0)
+                    if clr == self.WHITE:
                         pygame.draw.circle(self.screen, self.BLACK, (x, y), self.cell_size // 2 - 2, 1)
 
     def draw_ui(self):
-        panel_x = self.board_pixel + 10
-        panel_y = 30
-        panel_width = 180
+        px, py = self.board_pixel + 10, 25
 
         # 面板背景
-        panel_rect = pygame.Rect(panel_x - 5, 10, panel_width, self.screen_height - 20)
-        pygame.draw.rect(self.screen, (240, 240, 240), panel_rect)
-        pygame.draw.rect(self.screen, (180, 180, 180), panel_rect, 1)
+        pygame.draw.rect(self.screen, (240, 240, 240), self._panel_rect)
+        pygame.draw.rect(self.screen, (180, 180, 180), self._panel_rect, 1)
 
-        current_x = panel_x
+        # 状态
+        self.screen.blit(self._txt_turn_label, (px, py))
+        py += 25
 
-        # 当前回合
-        if self.game_over:
-            current_player = "游戏结束"
-        elif self.is_player_turn:
-            current_player = "玩家回合"
+        # 只在状态变化时重渲染
+        state = (self.game_over, self.is_player_turn, self.winner)
+        if state != getattr(self, '_last_state', None):
+            self._last_state = state
+            self._cache.pop('turn_text', None)
+            self._cache.pop('result_text', None)
+
+        if not self.game_over:
+            turn = "你的回合" if self.is_player_turn else "AI 思考..."
+            txt = self._cached_text('turn_text',
+                                    lambda: self.small_font.render(turn, True, (70, 130, 180)))
+            self.screen.blit(txt, (px, py))
         else:
-            current_player = "AI思考中..."
-        current_text = self.font.render(f"当前: {current_player}", True, self.TEXT_COLOR)
-        self.screen.blit(current_text, (current_x, panel_y))
-        panel_y += 35
+            wname = "黑棋" if self.winner == 1 else ("白棋" if self.winner == 2 else "平局")
+            txt = self._cached_text('result_text',
+                                    lambda: self.font.render(f"{wname}获胜!" if self.winner else "平局",
+                                                             True, (200, 30, 30) if self.winner else (0, 0, 200)))
+            self.screen.blit(txt, (px, py))
+        py += 40
 
-        # 难度
-        difficulty_label = self.small_font.render("难度:", True, self.TEXT_COLOR)
-        self.screen.blit(difficulty_label, (current_x, panel_y))
-        panel_y += 22
+        # 按钮
+        pygame.draw.rect(self.screen, (60, 179, 113), self._btn_restart, border_radius=5)
+        r = self._txt_restart.get_rect(center=self._btn_restart.center)
+        self.screen.blit(self._txt_restart, r)
 
-        depth_buttons = []
-        for i, depth in enumerate(self.depths):
-            btn_rect = pygame.Rect(current_x, panel_y, 55, 25)
-            depth_buttons.append(btn_rect)
-            is_selected = self.selected_depth == depth
-            color = (70, 130, 180) if is_selected else (220, 220, 220)
-            pygame.draw.rect(self.screen, color, btn_rect, border_radius=5)
-            depth_names = {2: "简单", 4: "中等", 6: "困难"}
-            text = self.small_font.render(f"{depth_names[depth]}", True,
-                                          self.WHITE if is_selected else self.TEXT_COLOR)
-            text_rect = text.get_rect(center=btn_rect.center)
-            self.screen.blit(text, text_rect)
-            panel_y += 30
-
-        panel_y += 15
-        btn_width, btn_height = 80, 32
-
-        # 重新开始按钮
-        restart_btn = pygame.Rect(current_x, panel_y, btn_width, btn_height)
-        pygame.draw.rect(self.screen, (60, 179, 113), restart_btn, border_radius=5)
-        restart_text = self.font.render("重新开始", True, self.WHITE)
-        restart_rect = restart_text.get_rect(center=restart_btn.center)
-        self.screen.blit(restart_text, restart_rect)
-
-        # 悔棋按钮
-        undo_btn = pygame.Rect(current_x + btn_width + 10, panel_y, btn_width, btn_height)
-        pygame.draw.rect(self.screen, (205, 92, 92), undo_btn, border_radius=5)
-        undo_text = self.font.render("悔棋", True, self.WHITE)
-        undo_rect = undo_text.get_rect(center=undo_btn.center)
-        self.screen.blit(undo_text, undo_rect)
-        panel_y += 45
-
-        # 游戏结果
-        if self.game_over:
-            panel_y += 20
-            winner_name = "黑棋" if self.winner == 1 else ("白棋" if self.winner == 2 else "平局")
-            result_color = (255, 0, 0) if self.winner else (0, 0, 255)
-            result_text = self.font.render(f"游戏结束!", True, result_color)
-            self.screen.blit(result_text, (current_x, panel_y))
-            panel_y += 30
-            winner_text = self.font.render(f"{winner_name}获胜!", True, result_color)
-            self.screen.blit(winner_text, (current_x, panel_y))
-
-        self._cached_buttons = {
-            'depth_buttons': depth_buttons,
-            'restart_btn': restart_btn,
-            'undo_btn': undo_btn
-        }
+        pygame.draw.rect(self.screen, (205, 92, 92), self._btn_undo, border_radius=5)
+        r = self._txt_undo.get_rect(center=self._btn_undo.center)
+        self.screen.blit(self._txt_undo, r)
 
     def handle_click(self, pos):
-        buttons = self._compute_buttons()
-
-        # 重新开始按钮 —— 始终可用
-        if buttons['restart_btn'].collidepoint(pos):
+        # 重新开始 —— 始终可用
+        if self._btn_restart.collidepoint(pos):
             self.board.reset()
             self.game_over = False
             self.winner = None
             self.ai_move = None
             self.is_player_turn = True
+            self._cache.clear()
             return
 
-        # 难度按钮 —— 始终可用
-        for i, btn in enumerate(buttons['depth_buttons']):
-            if btn.collidepoint(pos):
-                self.selected_depth = self.depths[i]
-                self.ai.set_depth(self.selected_depth)
-                return
-
-        # 悔棋按钮 —— 仅在游戏中可用
-        if buttons['undo_btn'].collidepoint(pos):
+        # 悔棋 —— 仅在游戏中
+        if self._btn_undo.collidepoint(pos) and not self.game_over:
             if self.board.last_move is not None:
                 self.board.undo_move()
             if self.board.last_move is not None:
                 self.board.undo_move()
-            self.game_over = False
             self.winner = None
             self.ai_move = None
             self.is_player_turn = True
+            self._cache.clear()
             return
 
-        # 棋盘落子 —— 仅在玩家回合且游戏未结束时可用
+        # 棋盘落子
         if not self.is_player_turn or self.game_over:
             return
-
         if pos[0] > self.board_pixel:
             return
 
         col = round((pos[0] - self.padding) / self.cell_size)
         row = round((pos[1] - self.padding) / self.cell_size)
+        if not (0 <= row < self.board_size and 0 <= col < self.board_size):
+            return
 
-        if 0 <= row < self.board_size and 0 <= col < self.board_size:
-            if self.board.make_move(row, col):
-                if self.board.check_win(row, col):
-                    self.game_over = True
-                    self.winner = 1
-                    self.is_player_turn = False
-                    return
-                if self.board.is_full():
-                    self.game_over = True
-                    self.is_player_turn = False
-                    return
-                self.is_player_turn = False
-                self.ai_result_ready = True
+        if self.board.make_move(row, col):
+            if self.board.check_win(row, col):
+                self.game_over = True
+                self.winner = 1
+                return
+            if self.board.is_full():
+                self.game_over = True
+                return
+            self.is_player_turn = False
+            self.ai_result_ready = True
 
     def run(self):
         def ai_think():
             self.ai_move = self.ai.get_best_move(self.board)
 
         running = True
-        clock = pygame.time.Clock()
 
         while running:
-            # AI落子
+            # ===== AI 落子 =====
             if self.ai_move is not None and not self.is_player_turn and not self.game_over:
-                row, col = self.ai_move
-                self.board.make_move(row, col)
-                if self.board.check_win(row, col):
+                r, c = self.ai_move
+                self.board.make_move(r, c)
+                if self.board.check_win(r, c):
                     self.game_over = True
                     self.winner = 2
                 self.ai_move = None
                 self.is_player_turn = True
 
-            # 启动AI思考
+            # ===== 启动 AI 思考 =====
             if self.ai_result_ready and self.ai_move is None and not self.game_over:
                 self.ai_result_ready = False
                 t = Thread(target=ai_think)
                 t.daemon = True
                 t.start()
 
-            # 事件处理
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+            # ===== 事件 =====
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
                     running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    self.handle_click(event.pos)
+                elif e.type == pygame.MOUSEBUTTONDOWN:
+                    self.handle_click(e.pos)
 
-            # 绘制
+            # ===== 渲染 =====
             self.draw_board()
             self.draw_ui()
             pygame.display.flip()
-            clock.tick(30)
 
         pygame.quit()
