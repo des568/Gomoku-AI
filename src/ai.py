@@ -5,132 +5,213 @@ from evaluation import Evaluator
 
 
 class AI:
-    K_TOP = {2: 12, 4: 10, 6: 8}       # 顶层候选：深度越深越少
-    K_INNER = {2: 8, 4: 6, 6: 5}        # 内层候选
-
     def __init__(self, depth=2):
         self.depth = depth
         self.evaluator = Evaluator()
         self.best_move = None
         self.nodes_searched = 0
         self.ai_player = Board.WHITE
-        self._top_k = AI.K_TOP.get(depth, 10)
-        self._inner_k = AI.K_INNER.get(depth, 6)
 
     def set_depth(self, depth):
         self.depth = depth
-        self._top_k = AI.K_TOP.get(depth, 8)
-        self._inner_k = AI.K_INNER.get(depth, 5)
 
     def get_best_move(self, board):
         self.best_move = None
         self.nodes_searched = 0
+        opponent = Board.BLACK if self.ai_player == Board.WHITE else Board.WHITE
 
-        candidates = board.get_candidates(radius=2)
+        # ===== 自适应策略：根据棋盘棋子数调整深度和候选数 =====
+        stone_count = sum(1 for r in range(board.size)
+                          for c in range(board.size) if board.board[r][c] != Board.EMPTY)
+
+        if stone_count <= 4:
+            effective_depth = 2
+            top_k, inner_k = 8, 6
+        elif stone_count <= 10:
+            effective_depth = self.depth
+            top_k, inner_k = 10, 8
+        elif stone_count <= 16:
+            effective_depth = self.depth + 1
+            top_k, inner_k = 10, 8
+        else:
+            effective_depth = self.depth + 1
+            top_k, inner_k = 12, 10
+
+        # 简单难度始终浅搜索
+        if self.depth <= 2:
+            effective_depth = min(effective_depth, 3)
+
+        # ===== 获取候选：只考虑有邻居的位置 =====
+        candidates = self._get_smart_candidates(board)
         if not candidates:
             return None
 
-        # === 优先检测：AI 能否立即获胜 ===
+        # ===== 优先检测：AI 能否直接获胜 =====
         for move in candidates:
-            if board.is_valid_move(move[0], move[1]):
-                if self._is_win(board, move, self.ai_player):
-                    return move
+            if self._is_win(board, move, self.ai_player):
+                return move
 
-        # === 优先检测：对手是否有杀招需要堵 ===
-        opponent = Board.BLACK if self.ai_player == Board.WHITE else Board.WHITE
-        opponent_wins = []
+        # ===== 优先检测：对手是否有必防点位 =====
+        opp_threats = []
         for move in candidates:
-            if board.is_valid_move(move[0], move[1]):
-                if self._is_win(board, move, opponent):
-                    opponent_wins.append(move)
-        if opponent_wins:
-            if len(opponent_wins) == 1:
-                return opponent_wins[0]
-            # 对面有多处杀招，选对自己最有利的
-            best_block = opponent_wins[0]
-            best_block_score = -math.inf
-            for move in opponent_wins:
+            if self._is_win(board, move, opponent):
+                opp_threats.append(move)
+
+        if opp_threats:
+            if len(opp_threats) == 1:
+                return opp_threats[0]
+            # 多处被杀，选最优
+            best = opp_threats[0]
+            best_s = -math.inf
+            for move in opp_threats:
                 board.make_move(move[0], move[1])
                 s = self.evaluator.fast_score(board, move, self.ai_player)
                 board.undo_move()
-                if s > best_block_score:
-                    best_block_score = s
-                    best_block = move
-            return best_block
+                if s > best_s:
+                    best_s = s
+                    best = move
+            return best
 
-        # === 使用 fast_score 排序候选 ===
+        # 检测对手活四/冲四威胁
+        for move in candidates:
+            if self._is_live_four(board, move, opponent):
+                opp_threats.append(move)
+        if opp_threats:
+            # 选对自己最有利的封堵
+            best = opp_threats[0]
+            best_s = -math.inf
+            for move in opp_threats:
+                board.make_move(move[0], move[1])
+                s = self.evaluator.fast_score(board, move, self.ai_player)
+                board.undo_move()
+                if s > best_s:
+                    best_s = s
+                    best = move
+            return best
+
+        # ===== fast_score 排序候选 =====
         scored = []
         for move in candidates:
             s = self.evaluator.fast_score(board, move, self.ai_player)
             scored.append((s, move))
         scored.sort(key=lambda x: x[0], reverse=True)
-        scored = scored[:self._top_k]
+        scored = scored[:top_k]
 
-        # === Minimax 搜索 ===
+        # ===== Negamax 搜索 =====
         best_score = -math.inf
         for _, move in scored:
             board.make_move(move[0], move[1])
-            eval_score = self._minimax(board, self.depth - 1, -math.inf, math.inf, False)
+            # Negamax: 对手视角 = -negamax(对手)
+            score = -self._negamax(board, effective_depth - 1, -math.inf, -best_score, opponent)
             board.undo_move()
-            if eval_score > best_score or self.best_move is None:
-                best_score = eval_score
+            if score > best_score or self.best_move is None:
+                best_score = score
                 self.best_move = move
 
         return self.best_move if self.best_move else scored[0][1]
 
-    def _minimax(self, board, depth, alpha, beta, maximizing):
+    def _negamax(self, board, depth, alpha, beta, player):
+        """负值极大搜索 + Alpha-Beta 剪枝"""
         self.nodes_searched += 1
 
+        # 检查上一步是否获胜
         if board.last_move is not None:
             if board.check_win(board.last_move[0], board.last_move[1]):
-                return math.inf if board.board[board.last_move[0]][board.last_move[1]] == self.ai_player else -math.inf
+                return -math.inf
 
         if board.is_full():
             return 0
 
         if depth == 0:
-            return self.evaluator.evaluate(board, self.ai_player)
+            return self.evaluator.evaluate(board, player)
 
-        candidates = board.get_candidates(radius=1)
+        candidates = self._get_smart_candidates(board)
         if not candidates:
-            return self.evaluator.evaluate(board, self.ai_player)
+            return self.evaluator.evaluate(board, player)
 
-        # 使用 fast_score 排序并限制候选数
-        if len(candidates) > self._inner_k:
+        # 动态候选限制：越深越少
+        if depth <= 2:
+            nk = 6
+        elif depth <= 4:
+            nk = 8
+        else:
+            nk = 10
+
+        # 排序并限制候选
+        if len(candidates) > nk:
             scored = []
             for m in candidates:
-                s = self.evaluator.fast_score(board, m, self.ai_player)
+                s = self.evaluator.fast_score(board, m, player)
                 scored.append((s, m))
-            # 最大化时降序、最小化时升序（优先考虑对手的最优应手）
-            scored.sort(key=lambda x: x[0], reverse=maximizing)
-            candidates = [m for _, m in scored[:self._inner_k]]
+            scored.sort(key=lambda x: x[0], reverse=True)
+            candidates = [m for _, m in scored[:nk]]
 
-        if maximizing:
-            max_eval = -math.inf
-            for m in candidates:
-                board.make_move(m[0], m[1])
-                v = self._minimax(board, depth - 1, alpha, beta, False)
-                board.undo_move()
-                max_eval = max(max_eval, v)
-                alpha = max(alpha, v)
-                if beta <= alpha:
-                    break
-            return max_eval
-        else:
-            min_eval = math.inf
-            for m in candidates:
-                board.make_move(m[0], m[1])
-                v = self._minimax(board, depth - 1, alpha, beta, True)
-                board.undo_move()
-                min_eval = min(min_eval, v)
-                beta = min(beta, v)
-                if beta <= alpha:
-                    break
-            return min_eval
+        opponent = Board.WHITE if player == Board.BLACK else Board.BLACK
+        best = -math.inf
+
+        for move in candidates:
+            board.make_move(move[0], move[1])
+            val = -self._negamax(board, depth - 1, -beta, -alpha, opponent)
+            board.undo_move()
+
+            if val > best:
+                best = val
+            if val > alpha:
+                alpha = val
+            if alpha >= beta:
+                break
+
+        return best
+
+    def _get_smart_candidates(self, board):
+        """只取有邻居的空位——大幅减少无效候选"""
+        candidates = []
+        for row in range(board.size):
+            for col in range(board.size):
+                if board.board[row][col] != Board.EMPTY:
+                    continue
+                if self._has_neighbor(board, row, col):
+                    candidates.append((row, col))
+        if candidates:
+            return candidates
+        # 空棋盘（第一步）走天元
+        return [(7, 7)]
+
+    def _has_neighbor(self, board, row, col):
+        """检查该位置2格内是否有棋子"""
+        for dr in range(-2, 3):
+            for dc in range(-2, 3):
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < board.size and 0 <= nc < board.size:
+                    if board.board[nr][nc] != Board.EMPTY:
+                        return True
+        return False
 
     def _is_win(self, board, move, player):
-        """检查某落子是否直接形成五连"""
         board.board[move[0]][move[1]] = player
         result = board.check_win(move[0], move[1])
         board.board[move[0]][move[1]] = Board.EMPTY
         return result
+
+    def _is_live_four(self, board, move, player):
+        """检查下在move后是否形成活四或冲四"""
+        row, col = move
+        board.board[row][col] = player
+        directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+        is_threat = False
+        for dx, dy in directions:
+            # 向两个方向各检查5格
+            line = []
+            for i in range(-4, 5):
+                r, c = row + i * dx, col + i * dy
+                if 0 <= r < board.size and 0 <= c < board.size:
+                    line.append(board.board[r][c])
+                else:
+                    line.append(-1)
+            pattern = self.evaluator._create_pattern(line, player)
+            # 活四或冲四
+            if '011110' in pattern or '11110' in pattern or '01111' in pattern:
+                is_threat = True
+                break
+        board.board[row][col] = Board.EMPTY
+        return is_threat
