@@ -103,7 +103,7 @@ class UI:
         pygame.draw.rect(self.screen, (180, 180, 180), panel_rect, 1)
         
         current_x = panel_x
-        
+
         # 当前回合
         if self.game_over:
             current_player = "游戏结束"
@@ -111,22 +111,24 @@ class UI:
             current_player = "玩家回合"
         else:
             current_player = "AI思考中..."
-        
+
         current_text = self.font.render(f"当前: {current_player}", True, self.TEXT_COLOR)
         self.screen.blit(current_text, (current_x, panel_y))
         panel_y += 35
-        
+
         # 难度选择
         difficulty_label = self.small_font.render("难度:", True, self.TEXT_COLOR)
         self.screen.blit(difficulty_label, (current_x, panel_y))
         panel_y += 22
-        
+
+        depth_buttons = []
         for i, depth in enumerate(self.depths):
             btn_rect = pygame.Rect(current_x, panel_y, 55, 25)
+            depth_buttons.append(btn_rect)
             is_selected = self.selected_depth == depth
             color = (70, 130, 180) if is_selected else (220, 220, 220)
             pygame.draw.rect(self.screen, color, btn_rect, border_radius=5)
-            
+
             depth_names = {2: "简单", 4: "中等", 6: "困难"}
             text = self.small_font.render(f"{depth_names[depth]}", True, self.WHITE if is_selected else self.TEXT_COLOR)
             text_rect = text.get_rect(center=btn_rect.center)
@@ -166,7 +168,7 @@ class UI:
             self.screen.blit(winner_text, (current_x, panel_y))
         
         return {
-            'depth_buttons': [pygame.Rect(current_x, 77 + i * 30, 55, 25) for i in range(3)],
+            'depth_buttons': depth_buttons,
             'restart_btn': restart_btn,
             'undo_btn': undo_btn
         }

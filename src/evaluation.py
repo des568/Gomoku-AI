@@ -1,3 +1,6 @@
+from board import Board
+
+
 class Evaluator:
     FIVE = 100000
     LIVE_FOUR = 10000
@@ -8,7 +11,7 @@ class Evaluator:
     BLOCKED_TWO = 50
     LIVE_ONE = 10
     BLOCKED_ONE = 5
-    
+
     PATTERNS = {
         '11111': FIVE,
         '011110': LIVE_FOUR,
@@ -31,71 +34,94 @@ class Evaluator:
         '10': BLOCKED_ONE,
         '01': BLOCKED_ONE,
     }
-    
+
     def __init__(self):
         self.center_weight = [[0] * 15 for _ in range(15)]
         for i in range(15):
             for j in range(15):
                 dist = abs(i - 7) + abs(j - 7)
                 self.center_weight[i][j] = max(0, 8 - dist)
-    
+
     def evaluate(self, board, player):
         score = 0
         opponent = Board.WHITE if player == Board.BLACK else Board.BLACK
-        
+
+        # 位置权重
         for row in range(board.size):
             for col in range(board.size):
                 if board.board[row][col] != Board.EMPTY:
                     score += self.center_weight[row][col] * (1 if board.board[row][col] == player else -1)
-        
+
         directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-        
-        for row in range(board.size):
-            for col in range(board.size):
-                if board.board[row][col] != Board.EMPTY:
-                    for dx, dy in directions:
-                        line = self._get_line(board, row, col, dx, dy)
+
+        for dx, dy in directions:
+            processed = set()
+            for row in range(board.size):
+                for col in range(board.size):
+                    if (row, col) in processed:
+                        continue
+
+                    # 找到该方向线的起点
+                    r, c = row, col
+                    while 0 <= r - dx < board.size and 0 <= c - dy < board.size:
+                        r -= dx
+                        c -= dy
+
+                    # 提取整条线
+                    line = []
+                    positions = []
+                    tr, tc = r, c
+                    while 0 <= tr < board.size and 0 <= tc < board.size:
+                        positions.append((tr, tc))
+                        line.append(board.board[tr][tc])
+                        tr += dx
+                        tc += dy
+
+                    # 标记已处理
+                    for pos in positions:
+                        processed.add(pos)
+
+                    # 对这条线评分（长度>=5才可能成五连）
+                    if len(line) >= 5:
                         player_pattern = self._create_pattern(line, player)
                         opp_pattern = self._create_pattern(line, opponent)
-                        
-                        score += self._pattern_to_score(player_pattern)
-                        score -= self._pattern_to_score(opp_pattern)
-        
+                        score += self._line_score(player_pattern)
+                        score -= self._line_score(opp_pattern)
+
         return score
-    
-    def _get_line(self, board, row, col, dx, dy):
-        line = []
-        r, c = row, col
-        
-        while 0 <= r - dx < board.size and 0 <= c - dy < board.size:
-            r -= dx
-            c -= dy
-        
-        while 0 <= r < board.size and 0 <= c < board.size:
-            line.append(board.board[r][c])
-            r += dx
-            c += dy
-        
-        return line
-    
+
     def _create_pattern(self, line, player):
-        pattern = []
+        result = []
         for cell in line:
             if cell == player:
-                pattern.append('1')
+                result.append('1')
             elif cell == Board.EMPTY:
-                pattern.append('0')
+                result.append('0')
             else:
-                pattern.append('x')
-        
-        return ''.join(pattern)
-    
-    def _pattern_to_score(self, pattern):
-        max_score = 0
-        for key, score in Evaluator.PATTERNS.items():
-            if key in pattern:
-                if score > max_score:
-                    max_score = score
-        return max_score
+                result.append('x')
+        return ''.join(result)
 
-from board import Board
+    def _line_score(self, pattern):
+        """对一条线的模式字符串评分，使用非重叠最优匹配"""
+        # 优先检测五连（获胜条件），避免被周围模式误匹配
+        if '11111' in pattern:
+            return Evaluator.FIVE
+
+        total = 0
+        i = 0
+        # 按分数降序排序，每个位置取最高分匹配
+        sorted_patterns = sorted(Evaluator.PATTERNS.items(),
+                                 key=lambda x: (-x[1], -len(x[0])))
+
+        while i < len(pattern):
+            best_score = 0
+            best_len = 1
+            for key, pat_score in sorted_patterns:
+                if i + len(key) <= len(pattern) and pattern[i:i + len(key)] == key:
+                    best_score = pat_score
+                    best_len = len(key)
+                    break
+            total += best_score
+            i += best_len
+
+        return total
