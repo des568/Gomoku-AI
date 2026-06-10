@@ -43,52 +43,77 @@ class Evaluator:
                 self.center_weight[i][j] = max(0, 8 - dist)
 
     def evaluate(self, board, player):
+        """完整局面评估——仅用于叶子节点"""
         score = 0
         opponent = Board.WHITE if player == Board.BLACK else Board.BLACK
 
-        # 位置权重
         for row in range(board.size):
             for col in range(board.size):
                 if board.board[row][col] != Board.EMPTY:
                     score += self.center_weight[row][col] * (1 if board.board[row][col] == player else -1)
 
         directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-
         for dx, dy in directions:
             processed = set()
             for row in range(board.size):
                 for col in range(board.size):
                     if (row, col) in processed:
                         continue
-
-                    # 找到该方向线的起点
                     r, c = row, col
                     while 0 <= r - dx < board.size and 0 <= c - dy < board.size:
                         r -= dx
                         c -= dy
-
-                    # 提取整条线
-                    line = []
-                    positions = []
+                    line, positions = [], []
                     tr, tc = r, c
                     while 0 <= tr < board.size and 0 <= tc < board.size:
                         positions.append((tr, tc))
                         line.append(board.board[tr][tc])
                         tr += dx
                         tc += dy
-
-                    # 标记已处理
                     for pos in positions:
                         processed.add(pos)
-
-                    # 对这条线评分（长度>=5才可能成五连）
                     if len(line) >= 5:
-                        player_pattern = self._create_pattern(line, player)
-                        opp_pattern = self._create_pattern(line, opponent)
-                        score += self._line_score(player_pattern)
-                        score -= self._line_score(opp_pattern)
-
+                        score += self._line_score(self._create_pattern(line, player))
+                        score -= self._line_score(self._create_pattern(line, opponent))
         return score
+
+    def fast_score(self, board, move, player):
+        """
+        轻量级位置评分——仅评估经过该位置的4条线。
+        用于候选排序，比完整 evaluate 快 10 倍以上。
+        """
+        row, col = move
+        opponent = Board.WHITE if player == Board.BLACK else Board.BLACK
+        score = 0
+
+        directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+        for dx, dy in directions:
+            # 沿该方向提取9格窗口（以落子位置为中心）
+            line = []
+            r, c = row - 4 * dx, col - 4 * dy
+            for _ in range(9):
+                if 0 <= r < board.size and 0 <= c < board.size:
+                    line.append(board.board[r][c])
+                else:
+                    line.append(-1)  # 边界外
+                r += dx
+                c += dy
+
+            if len([1 for v in line if v != -1]) >= 5:
+                score += self._line_score(self._create_pattern(line, player))
+                score -= self._line_score(self._create_pattern(line, opponent))
+
+        # 中心位置奖励
+        score += self.center_weight[row][col] * 20
+        return score
+
+    def is_winning_move(self, board, move, player):
+        """检查某个落子是否直接获胜"""
+        row, col = move
+        board.board[row][col] = player
+        result = board.check_win(row, col)
+        board.board[row][col] = Board.EMPTY
+        return result
 
     def _create_pattern(self, line, player):
         result = []
@@ -102,14 +127,11 @@ class Evaluator:
         return ''.join(result)
 
     def _line_score(self, pattern):
-        """对一条线的模式字符串评分，使用非重叠最优匹配"""
-        # 优先检测五连（获胜条件），避免被周围模式误匹配
         if '11111' in pattern:
             return Evaluator.FIVE
 
         total = 0
         i = 0
-        # 按分数降序排序，每个位置取最高分匹配
         sorted_patterns = sorted(Evaluator.PATTERNS.items(),
                                  key=lambda x: (-x[1], -len(x[0])))
 
