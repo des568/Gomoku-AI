@@ -29,11 +29,9 @@ class UI:
         self.depths = [2, 4, 6]
         self.game_over = False
         self.winner = None
-        self.ai_thinking = False
-        self.ai_move = None
-        self.player_just_moved = False  # 玩家刚落子标志
-        self.ai_思考_延迟 = 0  # AI思考延迟计数器
-        self.ai_result = None  # AI计算结果
+        self.ai_move = None  # AI的落子位置
+        self.is_player_turn = True  # 是否是玩家回合
+        self.ai_result_ready = False  # AI计算是否完成
     
     def _get_font(self, size):
         """获取支持中文的字体"""
@@ -107,11 +105,12 @@ class UI:
         current_x = panel_x
         
         # 当前回合
-        current_player = "黑棋" if self.board.current_player == 1 else "白棋"
-        if self.ai_thinking:
+        if self.game_over:
+            current_player = "游戏结束"
+        elif self.is_player_turn:
+            current_player = "玩家回合"
+        else:
             current_player = "AI思考中..."
-        elif self.player_just_moved:
-            current_player = "等待AI..."
         
         current_text = self.font.render(f"当前: {current_player}", True, self.TEXT_COLOR)
         self.screen.blit(current_text, (current_x, panel_y))
@@ -173,8 +172,8 @@ class UI:
         }
     
     def handle_click(self, pos):
-        # 如果AI正在思考，忽略点击
-        if self.ai_thinking or self.player_just_moved:
+        # 只有玩家回合才能落子
+        if not self.is_player_turn or self.game_over:
             return
         
         buttons = self.draw_ui()
@@ -192,18 +191,19 @@ class UI:
             self.game_over = False
             self.winner = None
             self.ai_move = None
-            self.player_just_moved = False
+            self.is_player_turn = True
             return
         
         # 检查悔棋按钮
         if buttons['undo_btn'].collidepoint(pos):
             # 撤销两步（玩家和AI各一步）
-            self.board.undo_move()
-            self.board.undo_move()
+            if self.board.last_move is not None:
+                self.board.undo_move()
+                self.board.undo_move()
             self.game_over = False
             self.winner = None
             self.ai_move = None
-            self.player_just_moved = False
+            self.is_player_turn = True
             return
         
         # 检查是否点击在棋盘内
@@ -219,66 +219,64 @@ class UI:
                 if self.board.check_win(row, col):
                     self.game_over = True
                     self.winner = 1  # 黑棋
+                    self.is_player_turn = False
                     return
                 
                 # 检查是否平局
                 if self.board.is_full():
                     self.game_over = True
+                    self.is_player_turn = False
                     return
                 
-                # 玩家落子完成，标记并开始AI思考
-                self.player_just_moved = True
-                self.ai_thinking = True
-                self.ai_move = None
+                # 玩家落子完成，切换到AI回合
+                self.is_player_turn = False
+                self.ai_result_ready = True  # 标记AI可以开始思考
     
     def run(self):
-        import threading
         from threading import Thread
         
-        def ai_thread():
-            """在后台线程中计算AI的落子"""
+        def ai_think():
+            """AI思考线程"""
             self.ai_move = self.ai.get_best_move(self.board)
-            self.ai_thinking = False
         
         running = True
         while running:
-            # 处理AI思考完成后的落子
-            if self.player_just_moved and not self.ai_thinking and self.ai_move:
-                # AI思考完成，执行落子
-                self.board.make_move(self.ai_move[0], self.ai_move[1])
+            # ===== 核心逻辑：处理AI落子 =====
+            # 只有当AI思考完成（ai_move不为空）且不是玩家回合时才执行
+            if self.ai_move is not None and not self.is_player_turn and not self.game_over:
+                # 执行AI落子
+                row, col = self.ai_move
+                self.board.make_move(row, col)
                 
                 # 检查AI是否获胜
-                if self.board.check_win(self.ai_move[0], self.ai_move[1]):
+                if self.board.check_win(row, col):
                     self.game_over = True
                     self.winner = 2  # 白棋
                 
-                self.player_just_moved = False
+                # 重置状态，切换回玩家回合
                 self.ai_move = None
+                self.is_player_turn = True
             
-            # 启动新的AI思考线程
-            if self.player_just_moved and self.ai_thinking and self.ai_result is None:
-                self.ai_result = True  # 标记正在思考
-                t = Thread(target=ai_thread)
+            # 启动AI思考线程
+            if self.ai_result_ready and self.ai_move is None and not self.game_over:
+                self.ai_result_ready = False
+                t = Thread(target=ai_think)
                 t.daemon = True
                 t.start()
             
-            # 重置ai_result当AI思考开始时
-            if not self.ai_thinking:
-                self.ai_result = None
-            
-            # 处理事件
+            # ===== 处理用户输入 =====
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self.handle_click(event.pos)
             
-            # 绘制界面
+            # ===== 绘制界面 =====
             self.draw_board()
             self.draw_ui()
             pygame.display.flip()
             
-            # 简单的帧率控制
+            # 控制帧率，避免CPU占用过高
             pygame.time.delay(30)
         
         pygame.quit()
