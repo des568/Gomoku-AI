@@ -44,6 +44,8 @@ class Evaluator:
 
     def evaluate(self, board, player):
         """完整局面评估——仅用于叶子节点"""
+        # 进攻偏好系数：己方棋型x1.1，对手x1.0
+        ATTACK_BIAS = 1.1
         score = 0
         opponent = Board.WHITE if player == Board.BLACK else Board.BLACK
 
@@ -73,7 +75,7 @@ class Evaluator:
                     for pos in positions:
                         processed.add(pos)
                     if len(line) >= 5:
-                        score += self._line_score(self._create_pattern(line, player))
+                        score += self._line_score(self._create_pattern(line, player)) * ATTACK_BIAS
                         score -= self._line_score(self._create_pattern(line, opponent))
         return score
 

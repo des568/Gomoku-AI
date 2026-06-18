@@ -46,24 +46,25 @@ class AI:
         if not candidates:
             return None
 
-        # ===== 优先检测：AI 能否直接获胜 =====
+        # ===== 优先级1：AI 直接获胜（五连）=====
         for move in candidates:
             if self._is_win(board, move, self.ai_player):
                 return move
 
-        # ===== 优先检测：对手是否有必防点位 =====
-        opp_threats = []
+        # ===== 优先级2：AI 创造活四/冲四（进攻）=====
+        ai_threats = []
         for move in candidates:
-            if self._is_win(board, move, opponent):
-                opp_threats.append(move)
-
-        if opp_threats:
-            if len(opp_threats) == 1:
-                return opp_threats[0]
-            # 多处被杀，选最优
-            best = opp_threats[0]
+            if self._is_live_four(board, move, self.ai_player):
+                ai_threats.append(move)
+        # 也检测 AI 的活三，主动布局进攻
+        if not ai_threats:
+            for move in candidates:
+                if self._is_live_three(board, move, self.ai_player):
+                    ai_threats.append(move)
+        if ai_threats:
+            best = ai_threats[0]
             best_s = -math.inf
-            for move in opp_threats:
+            for move in ai_threats:
                 board.make_move(move[0], move[1])
                 s = self.evaluator.fast_score(board, move, self.ai_player)
                 board.undo_move()
@@ -72,12 +73,31 @@ class AI:
                     best = move
             return best
 
-        # 检测对手活四/冲四威胁
+        # ===== 优先级3：对手有直接获胜威胁 → 必须堵 =====
+        opp_wins = []
+        for move in candidates:
+            if self._is_win(board, move, opponent):
+                opp_wins.append(move)
+        if opp_wins:
+            if len(opp_wins) == 1:
+                return opp_wins[0]
+            best = opp_wins[0]
+            best_s = -math.inf
+            for move in opp_wins:
+                board.make_move(move[0], move[1])
+                s = self.evaluator.fast_score(board, move, self.ai_player)
+                board.undo_move()
+                if s > best_s:
+                    best_s = s
+                    best = move
+            return best
+
+        # ===== 优先级4：对手有活四/冲四 → 封堵 =====
+        opp_threats = []
         for move in candidates:
             if self._is_live_four(board, move, opponent):
                 opp_threats.append(move)
         if opp_threats:
-            # 选对自己最有利的封堵
             best = opp_threats[0]
             best_s = -math.inf
             for move in opp_threats:
@@ -197,10 +217,8 @@ class AI:
         """检查下在move后是否形成活四或冲四"""
         row, col = move
         board.board[row][col] = player
-        directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-        is_threat = False
-        for dx, dy in directions:
-            # 向两个方向各检查5格
+        result = False
+        for dx, dy in [(0, 1), (1, 0), (1, 1), (1, -1)]:
             line = []
             for i in range(-4, 5):
                 r, c = row + i * dx, col + i * dy
@@ -208,10 +226,30 @@ class AI:
                     line.append(board.board[r][c])
                 else:
                     line.append(-1)
-            pattern = self.evaluator._create_pattern(line, player)
-            # 活四或冲四
-            if '011110' in pattern or '11110' in pattern or '01111' in pattern:
-                is_threat = True
+            p = self.evaluator._create_pattern(line, player)
+            if '011110' in p or '11110' in p or '01111' in p:
+                result = True
                 break
         board.board[row][col] = Board.EMPTY
-        return is_threat
+        return result
+
+    def _is_live_three(self, board, move, player):
+        """检查下在move后是否形成活三（双端空挡）"""
+        row, col = move
+        board.board[row][col] = player
+        result = False
+        for dx, dy in [(0, 1), (1, 0), (1, 1), (1, -1)]:
+            line = []
+            for i in range(-5, 6):
+                r, c = row + i * dx, col + i * dy
+                if 0 <= r < board.size and 0 <= c < board.size:
+                    line.append(board.board[r][c])
+                else:
+                    line.append(-1)
+            p = self.evaluator._create_pattern(line, player)
+            # 活三: 01110, 010110, 011010
+            if '01110' in p or '010110' in p or '011010' in p:
+                result = True
+                break
+        board.board[row][col] = Board.EMPTY
+        return result
