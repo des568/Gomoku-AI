@@ -46,67 +46,93 @@ class AI:
         if not candidates:
             return None
 
-        # ===== 优先级1：AI 直接获胜（五连）=====
+        # ========== 根节点威胁检测（五子棋规则优先级）==========
+        # 1. AI 直接五连 → 获胜
+        # 2. 对手能五连 → 必须堵
+        # 3. 对手有活四 → 必须堵（两边都要防，尽力而为）
+        # 4. AI 有活四 → 下子必胜
+        # 5. 对手有冲四 → 必须堵唯一胜点
+        # 6. AI 有冲四 → 下子造杀
+        # 7. AI 有活三 → 进攻（对手无严重威胁时）
+        # ========================================================
+
+        # 1. AI 直接获胜
         for move in candidates:
             if self._is_win(board, move, self.ai_player):
                 return move
 
-        # ===== 优先级2：AI 创造活四/冲四（进攻）=====
-        ai_threats = []
-        for move in candidates:
-            if self._is_live_four(board, move, self.ai_player):
-                ai_threats.append(move)
-        # 也检测 AI 的活三，主动布局进攻
-        if not ai_threats:
-            for move in candidates:
-                if self._is_live_three(board, move, self.ai_player):
-                    ai_threats.append(move)
-        if ai_threats:
-            best = ai_threats[0]
-            best_s = -math.inf
-            for move in ai_threats:
-                board.make_move(move[0], move[1])
-                s = self.evaluator.fast_score(board, move, self.ai_player)
-                board.undo_move()
-                if s > best_s:
-                    best_s = s
-                    best = move
-            return best
-
-        # ===== 优先级3：对手有直接获胜威胁 → 必须堵 =====
-        opp_wins = []
-        for move in candidates:
-            if self._is_win(board, move, opponent):
-                opp_wins.append(move)
+        # 2. 对手能五连 → 必须堵
+        opp_wins = [m for m in candidates if self._is_win(board, m, opponent)]
         if opp_wins:
             if len(opp_wins) == 1:
                 return opp_wins[0]
-            best = opp_wins[0]
-            best_s = -math.inf
-            for move in opp_wins:
-                board.make_move(move[0], move[1])
-                s = self.evaluator.fast_score(board, move, self.ai_player)
+            best, best_s = opp_wins[0], -math.inf
+            for m in opp_wins:
+                board.make_move(m[0], m[1])
+                s = self.evaluator.fast_score(board, m, self.ai_player)
                 board.undo_move()
                 if s > best_s:
-                    best_s = s
-                    best = move
+                    best_s, best = s, m
             return best
 
-        # ===== 优先级4：对手有活四/冲四 → 封堵 =====
-        opp_threats = []
-        for move in candidates:
-            if self._is_live_four(board, move, opponent):
-                opp_threats.append(move)
-        if opp_threats:
-            best = opp_threats[0]
-            best_s = -math.inf
-            for move in opp_threats:
-                board.make_move(move[0], move[1])
-                s = self.evaluator.fast_score(board, move, self.ai_player)
+        # 3. 对手有活四（两端空的四连）→ 必须堵
+        opp_live4 = [m for m in candidates if self._is_live_four_strict(board, m, opponent, live_only=True)]
+        if opp_live4:
+            best, best_s = opp_live4[0], -math.inf
+            for m in opp_live4:
+                board.make_move(m[0], m[1])
+                s = self.evaluator.fast_score(board, m, self.ai_player)
                 board.undo_move()
                 if s > best_s:
-                    best_s = s
-                    best = move
+                    best_s, best = s, m
+            return best
+
+        # 4. AI 有活四 → 下子必胜
+        ai_live4 = [m for m in candidates if self._is_live_four_strict(board, m, self.ai_player, live_only=True)]
+        if ai_live4:
+            best, best_s = ai_live4[0], -math.inf
+            for m in ai_live4:
+                board.make_move(m[0], m[1])
+                s = self.evaluator.fast_score(board, m, self.ai_player)
+                board.undo_move()
+                if s > best_s:
+                    best_s, best = s, m
+            return best
+
+        # 5. 对手有冲四 → 堵唯一胜点
+        opp_blocked4 = [m for m in candidates if self._is_live_four_strict(board, m, opponent, live_only=False)]
+        if opp_blocked4:
+            best, best_s = opp_blocked4[0], -math.inf
+            for m in opp_blocked4:
+                board.make_move(m[0], m[1])
+                s = self.evaluator.fast_score(board, m, self.ai_player)
+                board.undo_move()
+                if s > best_s:
+                    best_s, best = s, m
+            return best
+
+        # 6. AI 有冲四 → 主动造杀
+        ai_blocked4 = [m for m in candidates if self._is_live_four_strict(board, m, self.ai_player, live_only=False)]
+        if ai_blocked4:
+            best, best_s = ai_blocked4[0], -math.inf
+            for m in ai_blocked4:
+                board.make_move(m[0], m[1])
+                s = self.evaluator.fast_score(board, m, self.ai_player)
+                board.undo_move()
+                if s > best_s:
+                    best_s, best = s, m
+            return best
+
+        # 7. AI 有活三 → 进攻（此时已确认对手无严重威胁）
+        ai_live3 = [m for m in candidates if self._is_live_three(board, m, self.ai_player)]
+        if ai_live3:
+            best, best_s = ai_live3[0], -math.inf
+            for m in ai_live3:
+                board.make_move(m[0], m[1])
+                s = self.evaluator.fast_score(board, m, self.ai_player)
+                board.undo_move()
+                if s > best_s:
+                    best_s, best = s, m
             return best
 
         # ===== fast_score 排序候选 =====
@@ -214,27 +240,42 @@ class AI:
         return result
 
     def _is_live_four(self, board, move, player):
-        """检查下在move后是否形成活四或冲四"""
+        """检查下在move后是否形成活四或冲四（宽松，向后兼容）"""
+        return self._is_live_four_strict(board, move, player, live_only=False)
+
+    def _is_live_four_strict(self, board, move, player, live_only=True):
+        """
+        严格检测四子威胁。
+        live_only=True: 只检测活四（011110），两端都有空
+        live_only=False: 检测所有四子（活四、冲四）
+        """
         row, col = move
         board.board[row][col] = player
         result = False
         for dx, dy in [(0, 1), (1, 0), (1, 1), (1, -1)]:
             line = []
-            for i in range(-4, 5):
+            for i in range(-5, 6):  # ±5 = 11格窗口
                 r, c = row + i * dx, col + i * dy
                 if 0 <= r < board.size and 0 <= c < board.size:
                     line.append(board.board[r][c])
                 else:
                     line.append(-1)
             p = self.evaluator._create_pattern(line, player)
-            if '011110' in p or '11110' in p or '01111' in p:
-                result = True
-                break
+            if live_only:
+                # 只检测活四：011110（两端都空）
+                if '011110' in p:
+                    result = True
+                    break
+            else:
+                # 冲四：一侧堵一侧空
+                if '011110' in p or '11110' in p or '01111' in p or '11011' in p or '10111' in p or '11101' in p:
+                    result = True
+                    break
         board.board[row][col] = Board.EMPTY
         return result
 
     def _is_live_three(self, board, move, player):
-        """检查下在move后是否形成活三（双端空挡）"""
+        """检查下在move后是否形成活三（三连，两端各有2+空格可延伸）"""
         row, col = move
         board.board[row][col] = player
         result = False
@@ -247,7 +288,10 @@ class AI:
                 else:
                     line.append(-1)
             p = self.evaluator._create_pattern(line, player)
-            # 活三: 01110, 010110, 011010
+            # 活三: 三连两端都有空位可延伸
+            # 01110: 连续三子
+            # 010110: 跳活三 O X O O X O
+            # 011010: 跳活三 O O X O X O
             if '01110' in p or '010110' in p or '011010' in p:
                 result = True
                 break
